@@ -186,40 +186,40 @@ def build_intervals(hours_back: int = 24) -> int:
 def latest_meters() -> list[dict]:
     refresh_meter_status()
     with get_conn() as conn:
-        rows = conn.cursor(row_factory=dict_row).execute(
-            """
-            WITH recent_interval AS (
-                SELECT DISTINCT ON (meter_id)
-                    meter_id,
-                    interval_usage AS recent_interval_usage,
-                    window_start AS recent_interval_start,
-                    status AS recent_interval_status
-                FROM interval_readings
-                ORDER BY meter_id, window_start DESC
-            ),
-            today_usage AS (
-                SELECT meter_id, sum(interval_usage) AS today_usage
-                FROM interval_readings
-                WHERE window_start >= (
-                    date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai')
-                    AT TIME ZONE 'Asia/Shanghai'
+        with conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                """
+                WITH recent_interval AS (
+                    SELECT DISTINCT ON (meter_id)
+                        meter_id,
+                        interval_usage AS recent_interval_usage,
+                        window_start AS recent_interval_start,
+                        status AS recent_interval_status
+                    FROM interval_readings
+                    ORDER BY meter_id, window_start DESC
+                ),
+                today_usage AS (
+                    SELECT meter_id, sum(interval_usage) AS today_usage
+                    FROM interval_readings
+                    WHERE window_start >= (
+                        date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai')
+                        AT TIME ZONE 'Asia/Shanghai'
+                    )
+                    GROUP BY meter_id
                 )
-                GROUP BY meter_id
-            )
-            SELECT
-                ms.*,
-                ri.recent_interval_usage,
-                ri.recent_interval_start,
-                ri.recent_interval_status,
-                COALESCE(tu.today_usage, 0) AS today_usage
-            FROM meter_status ms
-            LEFT JOIN recent_interval ri ON ri.meter_id = ms.meter_id
-            LEFT JOIN today_usage tu ON tu.meter_id = ms.meter_id
-            ORDER BY ms.meter_id
-            """,
-            row_factory=dict_row,
-        ).fetchall()
-        return [dict(row) for row in rows]
+                SELECT
+                    ms.*,
+                    ri.recent_interval_usage,
+                    ri.recent_interval_start,
+                    ri.recent_interval_status,
+                    COALESCE(tu.today_usage, 0) AS today_usage
+                FROM meter_status ms
+                LEFT JOIN recent_interval ri ON ri.meter_id = ms.meter_id
+                LEFT JOIN today_usage tu ON tu.meter_id = ms.meter_id
+                ORDER BY ms.meter_id
+                """,
+            ).fetchall()
+            return [dict(row) for row in rows]
 
 
 def interval_history(meter_id: str | None, limit: int) -> list[dict]:
@@ -227,18 +227,18 @@ def interval_history(meter_id: str | None, limit: int) -> list[dict]:
     where = "WHERE meter_id = %s" if meter_id else ""
     params: tuple = (meter_id, limit) if meter_id else (limit,)
     with get_conn() as conn:
-        rows = conn.cursor(row_factory=dict_row).execute(
-            f"""
-            SELECT *
-            FROM interval_readings
-            {where}
-            ORDER BY window_start DESC
-            LIMIT %s
-            """,
-            params,
-            row_factory=dict_row,
-        ).fetchall()
-        return [dict(row) for row in rows]
+        with conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                f"""
+                SELECT *
+                FROM interval_readings
+                {where}
+                ORDER BY window_start DESC
+                LIMIT %s
+                """,
+                params,
+            ).fetchall()
+            return [dict(row) for row in rows]
 
 
 def recent_raw(meter_id: str | None, limit: int) -> list[dict]:
@@ -246,16 +246,16 @@ def recent_raw(meter_id: str | None, limit: int) -> list[dict]:
     where = "WHERE meter_id = %s" if meter_id else ""
     params: tuple = (meter_id, limit) if meter_id else (limit,)
     with get_conn() as conn:
-        rows = conn.cursor(row_factory=dict_row).execute(
-            f"""
-            SELECT id, meter_id, device_ts, received_ts, instant_flow, total_flow,
-                   unit, status, anomaly_reason
-            FROM raw_readings
-            {where}
-            ORDER BY device_ts DESC
-            LIMIT %s
-            """,
-            params,
-            row_factory=dict_row,
-        ).fetchall()
-        return [dict(row) for row in rows]
+        with conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                f"""
+                SELECT id, meter_id, device_ts, received_ts, instant_flow, total_flow,
+                       unit, status, anomaly_reason
+                FROM raw_readings
+                {where}
+                ORDER BY device_ts DESC
+                LIMIT %s
+                """,
+                params,
+            ).fetchall()
+            return [dict(row) for row in rows]
