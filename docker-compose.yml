@@ -1,0 +1,73 @@
+services:
+  emqx:
+    image: emqx/emqx:5.8.4
+    container_name: flow-emqx
+    restart: unless-stopped
+    environment:
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USER:-admin}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
+      EMQX_ALLOW_ANONYMOUS: "true"
+    ports:
+      - "1883:1883"
+      - "18083:18083"
+    volumes:
+      - emqx-data:/opt/emqx/data
+      - emqx-log:/opt/emqx/log
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: flow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-flow_monitor}
+      POSTGRES_USER: ${POSTGRES_USER:-flow_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flow_password}
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    container_name: flow-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      emqx:
+        condition: service_started
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://flow_user:flow_password@postgres:5432/flow_monitor}
+      MQTT_HOST: ${MQTT_HOST:-emqx}
+      MQTT_PORT: ${MQTT_PORT:-1883}
+      MQTT_TOPIC: ${MQTT_TOPIC:-meters/+/reading}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      CLOCK_SKEW_SECONDS: ${CLOCK_SKEW_SECONDS:-120}
+      OFFLINE_AFTER_SECONDS: ${OFFLINE_AFTER_SECONDS:-180}
+      TZ: Asia/Shanghai
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: flow-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  emqx-data:
+  emqx-log:
+  postgres-data:
