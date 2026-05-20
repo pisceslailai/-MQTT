@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import asyncio
+from datetime import datetime
 import logging
 
 from fastapi import FastAPI, Query
@@ -81,17 +82,23 @@ def get_latest_meters() -> dict:
 @app.get("/api/intervals")
 def get_intervals(
     meter_id: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    status: str | None = None,
     limit: int = Query(default=96, ge=1, le=500),
 ) -> dict:
-    return {"intervals": interval_history(meter_id, limit)}
+    return {"intervals": interval_history(meter_id, limit, start, end, status)}
 
 
 @app.get("/api/readings/recent")
 def get_recent_readings(
     meter_id: str | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    status: str | None = None,
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict:
-    return {"readings": recent_raw(meter_id, limit)}
+    return {"readings": recent_raw(meter_id, limit, start, end, status)}
 
 
 @app.post("/api/intervals/rebuild")

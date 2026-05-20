@@ -223,10 +223,31 @@ def latest_meters() -> list[dict]:
             return [dict(row) for row in rows]
 
 
-def interval_history(meter_id: str | None, limit: int) -> list[dict]:
+def interval_history(
+    meter_id: str | None,
+    limit: int,
+    start_ts: datetime | None = None,
+    end_ts: datetime | None = None,
+    status: str | None = None,
+) -> list[dict]:
     limit = min(max(limit, 1), 500)
-    where = "WHERE meter_id = %s" if meter_id else ""
-    params: tuple = (meter_id, limit) if meter_id else (limit,)
+    filters = []
+    params: list = []
+    if meter_id:
+        filters.append("meter_id = %s")
+        params.append(meter_id)
+    if start_ts:
+        filters.append("window_start >= %s")
+        params.append(start_ts)
+    if end_ts:
+        filters.append("window_start < %s")
+        params.append(end_ts)
+    if status:
+        filters.append("status = %s")
+        params.append(status)
+
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    params.append(limit)
     with get_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             rows = cur.execute(
@@ -234,18 +255,39 @@ def interval_history(meter_id: str | None, limit: int) -> list[dict]:
                 SELECT *
                 FROM interval_readings
                 {where}
-                ORDER BY window_start DESC
+                ORDER BY window_start ASC
                 LIMIT %s
                 """,
-                params,
+                tuple(params),
             ).fetchall()
             return [dict(row) for row in rows]
 
 
-def recent_raw(meter_id: str | None, limit: int) -> list[dict]:
+def recent_raw(
+    meter_id: str | None,
+    limit: int,
+    start_ts: datetime | None = None,
+    end_ts: datetime | None = None,
+    status: str | None = None,
+) -> list[dict]:
     limit = min(max(limit, 1), 500)
-    where = "WHERE meter_id = %s" if meter_id else ""
-    params: tuple = (meter_id, limit) if meter_id else (limit,)
+    filters = []
+    params: list = []
+    if meter_id:
+        filters.append("meter_id = %s")
+        params.append(meter_id)
+    if start_ts:
+        filters.append("device_ts >= %s")
+        params.append(start_ts)
+    if end_ts:
+        filters.append("device_ts < %s")
+        params.append(end_ts)
+    if status:
+        filters.append("status = %s")
+        params.append(status)
+
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    params.append(limit)
     with get_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             rows = cur.execute(
@@ -257,7 +299,7 @@ def recent_raw(meter_id: str | None, limit: int) -> list[dict]:
                 ORDER BY device_ts DESC
                 LIMIT %s
                 """,
-                params,
+                tuple(params),
             ).fetchall()
             return [dict(row) for row in rows]
 
