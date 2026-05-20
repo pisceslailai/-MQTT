@@ -95,6 +95,65 @@ curl http://localhost:8000/api/meters/latest
 curl "http://localhost:8000/api/intervals?meter_id=FM001&limit=96"
 curl "http://localhost:8000/api/readings/recent?meter_id=FM001&limit=20"
 curl -X POST "http://localhost:8000/api/intervals/rebuild?hours_back=24"
+curl http://localhost:8000/api/gateway-configs
+curl http://localhost:8000/api/runtime-settings
+curl "http://localhost:8000/api/readings/payloads?limit=5"
+```
+
+## 网关 JSON 解析配置
+
+前端进入 `网关配置` 页面，可以维护 MQTT payload 到标准读数的映射，不需要改代码适配不同网关字段名。
+
+同一页面也可以维护数据处理规则：
+
+- `时钟偏差阈值 秒`：设备时间与服务器接收时间超过该阈值时标记为 `clock_skew`
+- `离线判定阈值 秒`：超过该时间未收到数据时标记为离线
+- `15分钟最少样本数`：低于该数量的结算窗口标记为 `gap`
+
+每条配置包含：
+
+- `Topic 匹配`：支持 MQTT 通配符 `+` 和 `#`，例如 `meters/+/reading`
+- `表号 JSON 路径`：例如 `meter_id`、`data.meterNo`
+- `表号 Topic 段序号`：当 payload 没有表号时，可从 topic 中取值；`meters/FM001/reading` 的 `FM001` 序号为 `1`
+- `设备时间路径`：支持 ISO 时间字符串，必须带时区；也支持秒或毫秒时间戳
+- `瞬时流量路径`、`累计流量路径`
+- `单位路径` 和 `默认单位`
+- `瞬时流量倍率`、`累计流量倍率`：用于寄存器原始值换算
+- `样例 Payload JSON`：页面可直接测试解析结果
+- `最近原始 Payload`：从数据库读取最近 MQTT 原始报文，可一键套用到样例 JSON
+
+字段路径支持点号和数组下标：
+
+```text
+data.flow
+data.total
+channels[0].value
+```
+
+测试解析接口：
+
+```bash
+curl -X POST http://localhost:8000/api/gateway-configs/test \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "topic": "gateway/site-a/data",
+    "config": {
+      "name": "嵌套网关",
+      "topic_pattern": "gateway/+/data",
+      "meter_id_path": "meta.meter",
+      "device_ts_path": "time.ts",
+      "instant_flow_path": "values.flow_raw",
+      "total_flow_path": "values.total_raw",
+      "default_unit": "m3/h",
+      "instant_flow_scale": 0.1,
+      "total_flow_scale": 0.001
+    },
+    "payload": {
+      "meta": {"meter": "FM002"},
+      "time": {"ts": "2026-05-20T10:15:00+08:00"},
+      "values": {"flow_raw": 123, "total_raw": 567890}
+    }
+  }'
 ```
 
 ## 告警 Webhook
@@ -125,6 +184,28 @@ bash scripts/backup_postgres.sh
 ```
 
 备份文件默认写入 `./backups`，可通过 `BACKUP_DIR` 指定输出目录。
+默认清理 30 天以前的 dump，可通过 `RETENTION_DAYS` 调整。
+
+## 云服务器试运行
+
+生产试运行使用独立 Compose 文件：
+
+```bash
+bash scripts/generate_htpasswd.sh admin
+bash scripts/generate_emqx_auth_bootstrap.sh
+bash scripts/check_prod_ready.sh
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+生产版默认：
+
+- 只公开 `80/tcp` 和 `1883/tcp`
+- PostgreSQL 和 Backend 不直接暴露公网端口
+- EMQX Dashboard 只绑定 `127.0.0.1:18083`
+- 前端入口启用 Nginx Basic Auth
+- EMQX 禁止匿名 MQTT，使用 `deploy/emqx/auth-built-in-db-bootstrap.csv` 初始化账号
+
+详细步骤见 [docs/cloud-trial-run.md](docs/cloud-trial-run.md)。
 
 ## 当前测试重点
 
@@ -138,8 +219,6 @@ bash scripts/backup_postgres.sh
 
 ## 生产部署前待补
 
-- EMQX 禁止匿名访问，改成用户名密码
-- Nginx Basic Auth
-- PostgreSQL 每日本地备份和每周异地备份
-- 云服务器安全组最小开放
+- 每周异地备份落地到对象存储或另一台机器
 - 真实网关 topic、payload、寄存器倍率与现场流量计确认
+- `.env` 中将 `CORS_ORIGINS=*` 改为实际访问地址，例如 `http://服务器公网IP`

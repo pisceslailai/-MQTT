@@ -1,5 +1,7 @@
 .env
 backups/
+deploy/emqx/auth-built-in-db-bootstrap.csv
+deploy/nginx/.htpasswd
 __pycache__/
 *.py[cod]
 node_modules/

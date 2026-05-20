@@ -48,7 +48,9 @@ table {
 .section-head,
 .card-head,
 .refresh-box,
-.metric-grid {
+.metric-grid,
+.top-actions,
+.main-nav {
   display: flex;
   align-items: center;
 }
@@ -92,6 +94,37 @@ h2 {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.78);
   box-shadow: var(--shadow);
+}
+
+.top-actions {
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.main-nav {
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow);
+}
+
+.main-nav button {
+  min-height: 36px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.main-nav button.active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .refresh-box strong,
@@ -252,7 +285,8 @@ h2 {
   color: var(--bad);
 }
 
-.history-section {
+.history-section,
+.config-section {
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -318,6 +352,21 @@ h2 {
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
+}
+
+.primary-action.compact {
+  min-width: 108px;
+  padding: 0 14px;
+}
+
+.danger-action {
+  min-height: 36px;
+  border: 1px solid #e4b6b0;
+  border-radius: 6px;
+  background: var(--bad-bg);
+  color: var(--bad);
+  cursor: pointer;
+  font-weight: 800;
 }
 
 .summary-grid {
@@ -395,6 +444,236 @@ h2 {
 .meter-switch button.active {
   background: var(--accent);
   color: #fff;
+}
+
+.config-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.config-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.config-list button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 11px;
+  border: 1px solid #e2e7eb;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.config-list button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.config-list strong,
+.config-list span {
+  overflow-wrap: anywhere;
+}
+
+.config-list span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.config-form {
+  display: grid;
+  gap: 12px;
+}
+
+.form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.form-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.config-form label,
+.config-test-grid label,
+.full-field {
+  display: grid;
+  gap: 5px;
+}
+
+.config-form label span,
+.config-test-grid label span,
+.full-field span,
+.runtime-panel label span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.config-form input,
+.config-form textarea,
+.runtime-panel input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  padding: 6px 9px;
+  font: inherit;
+}
+
+.runtime-panel {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.55fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #e2e7eb;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.runtime-panel strong {
+  display: block;
+  color: var(--ink);
+}
+
+.runtime-panel label {
+  display: grid;
+  gap: 5px;
+}
+
+.config-form textarea {
+  min-height: 230px;
+  resize: vertical;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.86rem;
+}
+
+.check-field {
+  align-content: end;
+  grid-template-columns: auto 1fr;
+  min-height: 61px;
+  padding: 10px;
+  border: 1px solid #e2e7eb;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.check-field input {
+  width: auto;
+  min-height: 0;
+}
+
+.config-test-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1.25fr) minmax(260px, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.test-result {
+  min-height: 260px;
+  padding: 10px;
+  border: 1px solid #e2e7eb;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.test-result strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.test-result pre {
+  overflow: auto;
+  max-height: 230px;
+  margin: 0;
+  color: #23313a;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.form-actions button {
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.payload-samples {
+  padding: 10px;
+  border: 1px solid #e2e7eb;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.payload-samples .chart-head {
+  margin-bottom: 8px;
+}
+
+.payload-samples .chart-head button {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.payload-list {
+  display: grid;
+  gap: 7px;
+  max-height: 230px;
+  overflow: auto;
+}
+
+.payload-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #e2e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.payload-list span,
+.payload-list strong,
+.payload-list small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.payload-list small,
+.payload-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .history-layout {
@@ -563,7 +842,8 @@ tbody tr:last-child td {
   }
 
   .topbar,
-  .section-head {
+  .section-head,
+  .top-actions {
     align-items: stretch;
     flex-direction: column;
   }
@@ -575,7 +855,12 @@ tbody tr:last-child td {
   .meter-grid,
   .history-layout,
   .query-panel,
-  .summary-grid {
+  .summary-grid,
+  .runtime-panel,
+  .config-layout,
+  .form-grid.two,
+  .form-grid.three,
+  .config-test-grid {
     grid-template-columns: 1fr;
   }
 

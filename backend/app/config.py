@@ -16,6 +16,11 @@ class Settings:
     offline_after_seconds: int = int(os.getenv("OFFLINE_AFTER_SECONDS", "180"))
     alert_webhook_url: str = os.getenv("ALERT_WEBHOOK_URL", "")
     alert_webhook_type: str = os.getenv("ALERT_WEBHOOK_TYPE", "wechat")
+    cors_origins: list[str] = [
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "*").split(",")
+        if origin.strip()
+    ]
 
 
 @lru_cache

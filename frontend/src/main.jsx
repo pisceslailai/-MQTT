@@ -16,6 +16,34 @@ const STATUS_TEXT = {
   counter_reset: '累计量回退',
   anomaly: '异常',
 };
+const DEFAULT_GATEWAY_CONFIG = {
+  name: '标准 MQTT JSON',
+  enabled: true,
+  priority: 100,
+  topic_pattern: 'meters/+/reading',
+  meter_id_path: 'meter_id',
+  meter_id_topic_index: 1,
+  device_ts_path: 'device_ts',
+  instant_flow_path: 'instant_flow',
+  total_flow_path: 'total_flow',
+  unit_path: 'unit',
+  default_unit: 'm3/h',
+  instant_flow_scale: 1,
+  total_flow_scale: 1,
+  sample_payload: {
+    meter_id: 'FM001',
+    device_ts: '2026-05-20T10:15:00+08:00',
+    instant_flow: 12.34,
+    total_flow: 56789.01,
+    unit: 'm3/h',
+  },
+  notes: '',
+};
+const DEFAULT_RUNTIME_SETTINGS = {
+  clock_skew_seconds: 120,
+  offline_after_seconds: 180,
+  expected_interval_samples: 10,
+};
 
 function endpoint(path) {
   return `${API_BASE}${path}`;
@@ -30,6 +58,23 @@ async function fetchJson(path, signal) {
     throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
+}
+
+async function sendJson(path, method, body, signal) {
+  const response = await fetch(endpoint(path), {
+    method,
+    signal,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.detail || `HTTP ${response.status}`);
+  }
+  return payload;
 }
 
 function toNumber(value) {
@@ -187,6 +232,7 @@ function downloadCsv(filename, rows, columns) {
 
 function App() {
   const initialRange = useMemo(() => defaultRange(24), []);
+  const [activePage, setActivePage] = useState('dashboard');
   const [latest, setLatest] = useState(() => normalizeLatest({}));
   const [latestError, setLatestError] = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
@@ -286,15 +332,25 @@ function App() {
           <p className="eyebrow">MQTT 流量监控</p>
           <h1>流量计运行看板</h1>
         </div>
-        <div className="refresh-box">
-          <span className={latestError ? 'dot danger' : 'dot ok'} />
-          <div>
-            <strong>{latestError ? '接口异常' : '实时轮询中'}</strong>
-            <span>{lastRefresh ? `更新时间 ${formatTime(lastRefresh)}` : '等待首条数据'}</span>
+        <div className="top-actions">
+          <div className="main-nav" role="tablist" aria-label="主导航">
+            <button type="button" className={activePage === 'dashboard' ? 'active' : ''} onClick={() => setActivePage('dashboard')}>运行看板</button>
+            <button type="button" className={activePage === 'gateway' ? 'active' : ''} onClick={() => setActivePage('gateway')}>网关配置</button>
+          </div>
+          <div className="refresh-box">
+            <span className={latestError ? 'dot danger' : 'dot ok'} />
+            <div>
+              <strong>{latestError ? '接口异常' : '实时轮询中'}</strong>
+              <span>{lastRefresh ? `更新时间 ${formatTime(lastRefresh)}` : '等待首条数据'}</span>
+            </div>
           </div>
         </div>
       </header>
 
+      {activePage === 'gateway' ? (
+        <GatewayConfigPage />
+      ) : (
+        <>
       {latestError && <StatusBanner text={`实时数据不可用：${latestError}`} />}
 
       <section className="meter-grid" aria-label="流量计实时读数">
@@ -374,7 +430,315 @@ function App() {
           loading={loadingHistory}
         />
       </section>
+        </>
+      )}
     </main>
+  );
+}
+
+function GatewayConfigPage() {
+  const [configs, setConfigs] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [form, setForm] = useState(() => normalizeConfigForm(DEFAULT_GATEWAY_CONFIG));
+  const [runtimeSettings, setRuntimeSettings] = useState(DEFAULT_RUNTIME_SETTINGS);
+  const [recentPayloads, setRecentPayloads] = useState([]);
+  const [sampleText, setSampleText] = useState(() => JSON.stringify(DEFAULT_GATEWAY_CONFIG.sample_payload, null, 2));
+  const [testTopic, setTestTopic] = useState('meters/FM001/reading');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [testResult, setTestResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  async function loadConfigs(signal) {
+    const payload = await fetchJson('/api/gateway-configs', signal);
+    const rows = Array.isArray(payload?.configs) ? payload.configs : [];
+    setConfigs(rows);
+    if (rows.length && selectedId === null) {
+      selectConfig(rows[0]);
+    }
+  }
+
+  async function loadRuntimeSettings(signal) {
+    const payload = await fetchJson('/api/runtime-settings', signal);
+    setRuntimeSettings(normalizeRuntimeSettings(payload?.settings));
+  }
+
+  async function loadRecentPayloads(signal) {
+    const payload = await fetchJson('/api/readings/payloads?limit=20', signal);
+    setRecentPayloads(Array.isArray(payload?.payloads) ? payload.payloads : []);
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    loadConfigs(controller.signal).catch((loadError) => setError(loadError.message || '无法加载配置'));
+    loadRuntimeSettings(controller.signal).catch((loadError) => setError(loadError.message || '无法加载处理规则'));
+    loadRecentPayloads(controller.signal).catch(() => setRecentPayloads([]));
+    return () => controller.abort();
+  }, []);
+
+  function selectConfig(config) {
+    setSelectedId(config.id || null);
+    setForm(normalizeConfigForm(config));
+    setSampleText(JSON.stringify(config.sample_payload || DEFAULT_GATEWAY_CONFIG.sample_payload, null, 2));
+    setTestTopic((config.topic_pattern || DEFAULT_GATEWAY_CONFIG.topic_pattern).replace('+', 'FM001').replace('#', 'reading'));
+    setMessage('');
+    setError('');
+    setTestResult(null);
+  }
+
+  function newConfig() {
+    setSelectedId(null);
+    setForm(normalizeConfigForm({ ...DEFAULT_GATEWAY_CONFIG, name: '新网关配置', priority: 50 }));
+    setSampleText(JSON.stringify(DEFAULT_GATEWAY_CONFIG.sample_payload, null, 2));
+    setTestTopic('meters/FM001/reading');
+    setMessage('');
+    setError('');
+    setTestResult(null);
+  }
+
+  function updateField(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateRuntimeField(field, value) {
+    setRuntimeSettings((current) => ({ ...current, [field]: value }));
+  }
+
+  function payloadForSubmit() {
+    return {
+      ...form,
+      priority: Number(form.priority),
+      meter_id_topic_index: form.meter_id_topic_index === '' ? null : Number(form.meter_id_topic_index),
+      instant_flow_scale: Number(form.instant_flow_scale),
+      total_flow_scale: Number(form.total_flow_scale),
+      sample_payload: JSON.parse(sampleText),
+    };
+  }
+
+  function usePayloadSample(row) {
+    setSampleText(JSON.stringify(row.payload || {}, null, 2));
+    setTestTopic(row.topic || testTopic);
+    setMessage(`已套用 ${row.meter_id || '未知表'} 的最近 payload`);
+    setError('');
+    setTestResult(null);
+  }
+
+  async function saveConfig(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const payload = payloadForSubmit();
+      const path = selectedId ? `/api/gateway-configs/${selectedId}` : '/api/gateway-configs';
+      const method = selectedId ? 'PUT' : 'POST';
+      const response = await sendJson(path, method, payload);
+      setMessage('配置已保存');
+      setSelectedId(response.config.id);
+      await loadConfigs();
+    } catch (saveError) {
+      setError(saveError.message || '保存失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function testConfig() {
+    setLoading(true);
+    setError('');
+    setMessage('');
+    setTestResult(null);
+    try {
+      const payload = payloadForSubmit();
+      const response = await sendJson('/api/gateway-configs/test', 'POST', {
+        config: payload,
+        topic: testTopic,
+        payload: payload.sample_payload,
+      });
+      setTestResult(response);
+      setMessage(response.ok ? '样例解析成功' : '样例解析失败');
+    } catch (testError) {
+      setError(testError.message || '测试失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteConfig() {
+    if (!selectedId) return;
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      await sendJson(`/api/gateway-configs/${selectedId}`, 'DELETE', {});
+      setMessage('配置已删除');
+      setSelectedId(null);
+      newConfig();
+      await loadConfigs();
+    } catch (deleteError) {
+      setError(deleteError.message || '删除失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveRuntimeSettings(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const payload = {
+        clock_skew_seconds: Number(runtimeSettings.clock_skew_seconds),
+        offline_after_seconds: Number(runtimeSettings.offline_after_seconds),
+        expected_interval_samples: Number(runtimeSettings.expected_interval_samples),
+      };
+      const response = await sendJson('/api/runtime-settings', 'PUT', payload);
+      setRuntimeSettings(normalizeRuntimeSettings(response.settings));
+      setMessage('数据处理规则已保存');
+    } catch (saveError) {
+      setError(saveError.message || '保存处理规则失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section className="config-section">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">后台配置</p>
+          <h2>网关 JSON 解析配置</h2>
+        </div>
+        <button type="button" className="primary-action compact" onClick={newConfig}>新增配置</button>
+      </div>
+
+      {(message || error) && <StatusBanner text={error || message} />}
+
+      <form className="runtime-panel" onSubmit={saveRuntimeSettings}>
+        <div>
+          <p className="eyebrow">数据处理规则</p>
+          <strong>异常判定与结算阈值</strong>
+        </div>
+        <div className="form-grid three">
+          <Field label="时钟偏差阈值 秒" type="number" value={runtimeSettings.clock_skew_seconds} onChange={(value) => updateRuntimeField('clock_skew_seconds', value)} />
+          <Field label="离线判定阈值 秒" type="number" value={runtimeSettings.offline_after_seconds} onChange={(value) => updateRuntimeField('offline_after_seconds', value)} />
+          <Field label="15分钟最少样本数" type="number" value={runtimeSettings.expected_interval_samples} onChange={(value) => updateRuntimeField('expected_interval_samples', value)} />
+        </div>
+        <button type="submit" className="primary-action compact" disabled={loading}>保存规则</button>
+      </form>
+
+      <div className="config-layout">
+        <aside className="config-list">
+          {configs.map((config) => (
+            <button
+              key={config.id}
+              type="button"
+              className={selectedId === config.id ? 'active' : ''}
+              onClick={() => selectConfig(config)}
+            >
+              <strong>{config.name}</strong>
+              <span>{config.enabled ? '启用' : '停用'} · {config.topic_pattern}</span>
+            </button>
+          ))}
+          {!configs.length && <EmptyState title="暂无配置" text="保存一个配置后会显示在这里。" />}
+        </aside>
+
+        <form className="config-form" onSubmit={saveConfig}>
+          <div className="form-grid two">
+            <Field label="配置名称" value={form.name} onChange={(value) => updateField('name', value)} />
+            <Field label="Topic 匹配" value={form.topic_pattern} onChange={(value) => updateField('topic_pattern', value)} />
+            <Field label="优先级" type="number" value={form.priority} onChange={(value) => updateField('priority', value)} />
+            <label className="check-field">
+              <input type="checkbox" checked={form.enabled} onChange={(event) => updateField('enabled', event.target.checked)} />
+              <span>启用此配置</span>
+            </label>
+          </div>
+
+          <div className="form-grid three">
+            <Field label="表号 JSON 路径" value={form.meter_id_path} onChange={(value) => updateField('meter_id_path', value)} />
+            <Field label="表号 Topic 段序号" type="number" value={form.meter_id_topic_index} onChange={(value) => updateField('meter_id_topic_index', value)} />
+            <Field label="设备时间路径" value={form.device_ts_path} onChange={(value) => updateField('device_ts_path', value)} />
+            <Field label="瞬时流量路径" value={form.instant_flow_path} onChange={(value) => updateField('instant_flow_path', value)} />
+            <Field label="累计流量路径" value={form.total_flow_path} onChange={(value) => updateField('total_flow_path', value)} />
+            <Field label="单位路径" value={form.unit_path} onChange={(value) => updateField('unit_path', value)} />
+            <Field label="默认单位" value={form.default_unit} onChange={(value) => updateField('default_unit', value)} />
+            <Field label="瞬时流量倍率" type="number" step="0.000001" value={form.instant_flow_scale} onChange={(value) => updateField('instant_flow_scale', value)} />
+            <Field label="累计流量倍率" type="number" step="0.000001" value={form.total_flow_scale} onChange={(value) => updateField('total_flow_scale', value)} />
+          </div>
+
+          <label className="full-field">
+            <span>备注</span>
+            <input value={form.notes} onChange={(event) => updateField('notes', event.target.value)} />
+          </label>
+
+          <div className="config-test-grid">
+            <label>
+              <span>测试 Topic</span>
+              <input value={testTopic} onChange={(event) => setTestTopic(event.target.value)} />
+            </label>
+            <label>
+              <span>样例 Payload JSON</span>
+              <textarea value={sampleText} onChange={(event) => setSampleText(event.target.value)} spellCheck="false" />
+            </label>
+            <div className="test-result">
+              <strong>解析结果</strong>
+              <pre>{testResult ? JSON.stringify(testResult, null, 2) : '尚未测试'}</pre>
+            </div>
+          </div>
+
+          <div className="payload-samples">
+            <div className="chart-head">
+              <strong>最近原始 Payload</strong>
+              <button type="button" onClick={() => loadRecentPayloads()} disabled={loading}>刷新</button>
+            </div>
+            <div className="payload-list">
+              {recentPayloads.map((row) => (
+                <button key={row.id} type="button" onClick={() => usePayloadSample(row)}>
+                  <span>
+                    <strong>{row.meter_id || '未知表'}</strong>
+                    {row.topic}
+                  </span>
+                  <small>{formatTime(row.received_ts)} · {statusText(row.status)}</small>
+                </button>
+              ))}
+              {!recentPayloads.length && <span className="payload-empty">暂无原始 payload，等待网关或模拟器上报。</span>}
+            </div>
+          </div>
+
+          <div className="form-actions">
+            <button type="button" onClick={testConfig} disabled={loading}>测试解析</button>
+            <button type="submit" className="primary-action" disabled={loading}>{loading ? '处理中' : '保存配置'}</button>
+            <button type="button" className="danger-action" onClick={deleteConfig} disabled={loading || !selectedId}>删除</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+function normalizeConfigForm(config) {
+  return {
+    ...DEFAULT_GATEWAY_CONFIG,
+    ...config,
+    enabled: Boolean(config.enabled ?? true),
+    meter_id_topic_index: config.meter_id_topic_index ?? '',
+  };
+}
+
+function normalizeRuntimeSettings(settings) {
+  return {
+    ...DEFAULT_RUNTIME_SETTINGS,
+    ...(settings || {}),
+  };
+}
+
+function Field({ label, value, onChange, type = 'text', step }) {
+  return (
+    <label>
+      <span>{label}</span>
+      <input type={type} step={step} value={value ?? ''} onChange={(event) => onChange(event.target.value)} />
+    </label>
   );
 }
 

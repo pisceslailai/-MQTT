@@ -3,9 +3,9 @@ import json
 
 from psycopg.rows import dict_row
 
-from .config import get_settings
 from .db import get_conn
 from .models import MeterReading
+from .runtime_settings import get_runtime_settings
 
 
 def normalize_window(ts: datetime) -> datetime:
@@ -15,13 +15,13 @@ def normalize_window(ts: datetime) -> datetime:
 
 
 def insert_reading(reading: MeterReading) -> dict:
-    settings = get_settings()
+    runtime_settings = get_runtime_settings()
     received_ts = datetime.now(UTC)
     skew_seconds = abs((received_ts - reading.device_ts.astimezone(UTC)).total_seconds())
 
     status = "valid"
     anomaly_reason = None
-    if skew_seconds > settings.clock_skew_seconds:
+    if skew_seconds > runtime_settings["clock_skew_seconds"]:
         status = "clock_skew"
         anomaly_reason = f"device time differs from receive time by {int(skew_seconds)} seconds"
 
@@ -84,7 +84,7 @@ def insert_reading(reading: MeterReading) -> dict:
 
 
 def refresh_meter_status() -> None:
-    settings = get_settings()
+    runtime_settings = get_runtime_settings()
     with get_conn() as conn:
         conn.execute(
             """
@@ -99,12 +99,13 @@ def refresh_meter_status() -> None:
                 END,
                 updated_at = now()
             """,
-            (settings.offline_after_seconds, settings.offline_after_seconds),
+            (runtime_settings["offline_after_seconds"], runtime_settings["offline_after_seconds"]),
         )
         conn.commit()
 
 
 def build_intervals(hours_back: int = 24) -> int:
+    runtime_settings = get_runtime_settings()
     now = datetime.now(UTC)
     first_window = normalize_window(now - timedelta(hours=hours_back))
     with get_conn() as conn:
@@ -156,9 +157,9 @@ def build_intervals(hours_back: int = 24) -> int:
                 min_instant_flow,
                 max_instant_flow,
                 sample_count,
-                sample_count < 10,
+                sample_count < %s,
                 CASE
-                    WHEN sample_count < 10 THEN 'gap'
+                    WHEN sample_count < %s THEN 'gap'
                     WHEN last_total_flow < first_total_flow THEN 'counter_reset'
                     ELSE 'valid'
                 END,
@@ -178,7 +179,11 @@ def build_intervals(hours_back: int = 24) -> int:
                 updated_at = now()
             RETURNING id
             """,
-            (first_window,),
+            (
+                first_window,
+                runtime_settings["expected_interval_samples"],
+                runtime_settings["expected_interval_samples"],
+            ),
         ).fetchall()
         conn.commit()
         return len(rows)
@@ -297,6 +302,32 @@ def recent_raw(
                 FROM raw_readings
                 {where}
                 ORDER BY device_ts DESC
+                LIMIT %s
+                """,
+                tuple(params),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+
+def recent_payloads(limit: int = 20, meter_id: str | None = None) -> list[dict]:
+    limit = min(max(limit, 1), 50)
+    filters = []
+    params: list = []
+    if meter_id:
+        filters.append("meter_id = %s")
+        params.append(meter_id)
+
+    where = f"WHERE {' AND '.join(filters)}" if filters else ""
+    params.append(limit)
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                f"""
+                SELECT id, meter_id, topic, payload, device_ts, received_ts,
+                       status, anomaly_reason
+                FROM raw_readings
+                {where}
+                ORDER BY received_ts DESC
                 LIMIT %s
                 """,
                 tuple(params),

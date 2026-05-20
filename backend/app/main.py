@@ -3,13 +3,24 @@ import asyncio
 from datetime import datetime
 import logging
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .alerts import send_meter_alerts
+from .config import get_settings
 from .db import close_pool, open_pool
+from .gateway_config import (
+    GatewayParseError,
+    delete_gateway_config,
+    ensure_gateway_config_schema,
+    get_gateway_config,
+    list_gateway_configs,
+    save_gateway_config,
+    test_gateway_config,
+)
 from .mqtt_client import MqttSubscriber
-from .storage import build_intervals, database_ping, interval_history, latest_meters, recent_raw, refresh_meter_status
+from .runtime_settings import ensure_runtime_settings_schema, get_runtime_settings, update_runtime_settings
+from .storage import build_intervals, database_ping, interval_history, latest_meters, recent_payloads, recent_raw, refresh_meter_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -36,6 +47,8 @@ async def background_loop() -> None:
 async def lifespan(app: FastAPI):
     global mqtt_subscriber, background_task
     open_pool()
+    ensure_gateway_config_schema()
+    ensure_runtime_settings_schema()
     mqtt_subscriber = MqttSubscriber()
     mqtt_subscriber.start()
     background_task = asyncio.create_task(background_loop())
@@ -50,9 +63,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Flow Meter Monitor", version="0.1.0", lifespan=lifespan)
+settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -101,7 +115,73 @@ def get_recent_readings(
     return {"readings": recent_raw(meter_id, limit, start, end, status)}
 
 
+@app.get("/api/readings/payloads")
+def get_recent_payloads(
+    meter_id: str | None = None,
+    limit: int = Query(default=20, ge=1, le=50),
+) -> dict:
+    return {"payloads": recent_payloads(limit, meter_id)}
+
+
 @app.post("/api/intervals/rebuild")
 def rebuild_intervals(hours_back: int = Query(default=24, ge=1, le=24 * 365)) -> dict:
     updated = build_intervals(hours_back)
     return {"updated": updated}
+
+
+@app.get("/api/gateway-configs")
+def get_gateway_configs() -> dict:
+    return {"configs": list_gateway_configs()}
+
+
+@app.get("/api/gateway-configs/{config_id}")
+def get_gateway_config_detail(config_id: int) -> dict:
+    config = get_gateway_config(config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="gateway config not found")
+    return {"config": config}
+
+
+@app.post("/api/gateway-configs")
+def create_gateway_config(payload: dict) -> dict:
+    try:
+        return {"config": save_gateway_config(payload)}
+    except GatewayParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/gateway-configs/{config_id}")
+def update_gateway_config(config_id: int, payload: dict) -> dict:
+    try:
+        return {"config": save_gateway_config(payload, config_id=config_id)}
+    except GatewayParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/gateway-configs/{config_id}")
+def remove_gateway_config(config_id: int) -> dict:
+    deleted = delete_gateway_config(config_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="gateway config not found")
+    return {"deleted": True}
+
+
+@app.post("/api/gateway-configs/test")
+def test_config(payload: dict) -> dict:
+    try:
+        return test_gateway_config(payload)
+    except (GatewayParseError, ValueError, TypeError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/runtime-settings")
+def get_settings_api() -> dict:
+    return {"settings": get_runtime_settings()}
+
+
+@app.put("/api/runtime-settings")
+def update_settings_api(payload: dict) -> dict:
+    try:
+        return {"settings": update_runtime_settings(payload)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

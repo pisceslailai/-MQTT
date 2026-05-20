@@ -1,37 +1,12 @@
-from datetime import datetime
-import json
 import logging
 
-from dateutil.parser import isoparse
 import paho.mqtt.client as mqtt
 
 from .config import get_settings
-from .models import MeterReading
+from .gateway_config import parse_reading_with_configs
 from .storage import insert_reading
 
 logger = logging.getLogger(__name__)
-
-
-def parse_reading(topic: str, payload: bytes) -> MeterReading:
-    data = json.loads(payload.decode("utf-8"))
-    device_ts = data.get("device_ts") or data.get("ts")
-    if not device_ts:
-        raise ValueError("payload missing device_ts")
-
-    parsed_ts = isoparse(str(device_ts))
-    if parsed_ts.tzinfo is None:
-        raise ValueError("device_ts must include timezone")
-
-    meter_id = str(data.get("meter_id") or topic.split("/")[1])
-    return MeterReading(
-        meter_id=meter_id,
-        device_ts=parsed_ts,
-        instant_flow=float(data["instant_flow"]),
-        total_flow=float(data["total_flow"]),
-        unit=str(data.get("unit", "m3/h")),
-        payload=data,
-        topic=topic,
-    )
 
 
 class MqttSubscriber:
@@ -69,14 +44,15 @@ class MqttSubscriber:
 
     def _on_message(self, client, userdata, message) -> None:
         try:
-            reading = parse_reading(message.topic, message.payload)
+            reading, config = parse_reading_with_configs(message.topic, message.payload)
             inserted = insert_reading(reading)
             logger.info(
-                "Stored reading id=%s meter=%s device_ts=%s status=%s",
+                "Stored reading id=%s meter=%s device_ts=%s status=%s config=%s",
                 inserted["id"],
                 inserted["meter_id"],
                 inserted["device_ts"],
                 inserted["status"],
+                config["name"] if config else "default",
             )
         except Exception:
             logger.exception("Failed to process MQTT message topic=%s payload=%r", message.topic, message.payload)
