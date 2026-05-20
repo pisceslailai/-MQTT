@@ -5,6 +5,17 @@ import './styles.css';
 const METERS = ['FM001', 'FM002'];
 const POLL_MS = 10000;
 const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+const STATUS_TEXT = {
+  valid: '正常',
+  normal: '正常',
+  online: '在线',
+  offline: '离线',
+  unknown: '未知',
+  gap: '缺数据',
+  clock_skew: '时钟偏差',
+  counter_reset: '累计量回退',
+  anomaly: '异常',
+};
 
 function endpoint(path) {
   return `${API_BASE}${path}`;
@@ -41,6 +52,12 @@ function formatTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function statusText(value, fallback = '正常') {
+  if (!value) return fallback;
+  const key = String(value).toLowerCase();
+  return STATUS_TEXT[key] || String(value);
 }
 
 function normalizeLatest(payload) {
@@ -122,7 +139,7 @@ function App() {
         setLastRefresh(new Date());
       } catch (error) {
         if (!mounted || error.name === 'AbortError') return;
-        setLatestError(error.message || 'Unable to load latest readings');
+        setLatestError(error.message || '无法加载实时数据');
       }
     }
 
@@ -146,7 +163,7 @@ function App() {
       .catch((error) => {
         if (error.name !== 'AbortError') {
           setIntervals([]);
-          setHistoryError(error.message || 'Unable to load intervals');
+          setHistoryError(error.message || '无法加载 15 分钟记录');
         }
       })
       .finally(() => setLoadingHistory(false));
@@ -161,21 +178,21 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div>
-          <p className="eyebrow">MQTT Flow Monitor</p>
-          <h1>Flow meter operations</h1>
+          <p className="eyebrow">MQTT 流量监控</p>
+          <h1>流量计运行看板</h1>
         </div>
         <div className="refresh-box">
           <span className={latestError ? 'dot danger' : 'dot ok'} />
           <div>
-            <strong>{latestError ? 'API degraded' : 'Live polling'}</strong>
-            <span>{lastRefresh ? `Updated ${formatTime(lastRefresh)}` : 'Waiting for first sample'}</span>
+            <strong>{latestError ? '接口异常' : '实时轮询中'}</strong>
+            <span>{lastRefresh ? `更新时间 ${formatTime(lastRefresh)}` : '等待首条数据'}</span>
           </div>
         </div>
       </header>
 
-      {latestError && <StatusBanner tone="warning" text={`Latest readings unavailable: ${latestError}`} />}
+      {latestError && <StatusBanner text={`实时数据不可用：${latestError}`} />}
 
-      <section className="meter-grid" aria-label="Latest meter readings">
+      <section className="meter-grid" aria-label="流量计实时读数">
         {METERS.map((id) => (
           <MeterCard
             key={id}
@@ -189,10 +206,10 @@ function App() {
       <section className="history-section">
         <div className="section-head">
           <div>
-            <p className="eyebrow">15-minute intervals</p>
-            <h2>{selectedMeter} history</h2>
+            <p className="eyebrow">15 分钟结算记录</p>
+            <h2>{selectedMeter} 历史趋势</h2>
           </div>
-          <div className="meter-switch" role="tablist" aria-label="Select meter history">
+          <div className="meter-switch" role="tablist" aria-label="选择流量计历史数据">
             {METERS.map((id) => (
               <button
                 key={id}
@@ -206,25 +223,25 @@ function App() {
           </div>
         </div>
 
-        {historyError && <StatusBanner tone="warning" text={`History unavailable: ${historyError}`} />}
+        {historyError && <StatusBanner text={`历史数据不可用：${historyError}`} />}
 
         <div className="history-layout">
           <div className="bars-panel">
             {loadingHistory ? (
-              <EmptyState title="Loading intervals" text="Fetching the latest 96 windows." />
+              <EmptyState title="正在加载" text="正在读取最近 96 个 15 分钟窗口。" />
             ) : intervals.length ? (
-              <div className="bars" aria-label="Interval increment bars">
+              <div className="bars" aria-label="15 分钟用量柱状图">
                 {intervals.slice(-32).map((row) => (
                   <div
                     key={row.id}
                     className={`bar ${row.anomaly ? 'anomaly' : ''}`}
                     style={{ height: `${Math.max(5, ((row.increment || 0) / maxIncrement) * 100)}%` }}
-                    title={`${formatTime(row.window_start)}: ${formatNumber(row.increment)} m3`}
+                    title={`${formatTime(row.window_start)}：${formatNumber(row.increment)} m3`}
                   />
                 ))}
               </div>
             ) : (
-              <EmptyState title="No interval data" text="The backend returned no 15-minute records yet." />
+              <EmptyState title="暂无结算数据" text="后端还没有生成 15 分钟记录。" />
             )}
           </div>
 
@@ -232,11 +249,11 @@ function App() {
             <table>
               <thead>
                 <tr>
-                  <th>Window</th>
-                  <th>Increment</th>
-                  <th>Avg flow</th>
-                  <th>Range</th>
-                  <th>Status</th>
+                  <th>时间窗口</th>
+                  <th>增量</th>
+                  <th>平均瞬时流量</th>
+                  <th>瞬时范围</th>
+                  <th>状态</th>
                 </tr>
               </thead>
               <tbody>
@@ -245,14 +262,14 @@ function App() {
                     <tr key={row.id}>
                       <td>
                         <span className="primary">{formatTime(row.window_start)}</span>
-                        <span className="subtle">{row.window_end ? `to ${formatTime(row.window_end)}` : '15-min window'}</span>
+                        <span className="subtle">{row.window_end ? `至 ${formatTime(row.window_end)}` : '15 分钟窗口'}</span>
                       </td>
                       <td>{formatNumber(row.increment)} m3</td>
                       <td>{formatNumber(row.avg_flow)} m3/h</td>
                       <td>{formatNumber(row.min_flow)} - {formatNumber(row.max_flow)}</td>
                       <td>
                         <span className={row.anomaly ? 'pill danger' : 'pill ok'}>
-                          {row.anomaly ? row.status || 'Anomaly' : 'Normal'}
+                          {row.anomaly ? statusText(row.status, '异常') : '正常'}
                         </span>
                       </td>
                     </tr>
@@ -260,7 +277,7 @@ function App() {
                 ) : (
                   <tr>
                     <td colSpan="5" className="empty-row">
-                      {loadingHistory ? 'Loading...' : 'No history records to display.'}
+                      {loadingHistory ? '加载中...' : '暂无历史记录。'}
                     </td>
                   </tr>
                 )}
@@ -287,19 +304,19 @@ function MeterCard({ meter, selected, onSelect }) {
           <span className="meter-id">{meter.meter_id}</span>
           <span className="subtle">{formatTime(timestamp)}</span>
         </div>
-        <span className={online ? 'pill ok' : 'pill muted'}>{online ? 'Online' : 'Offline'}</span>
+        <span className={online ? 'pill ok' : 'pill muted'}>{online ? '在线' : '离线'}</span>
       </div>
 
       <div className="metric-main">
         <span>{formatNumber(meter.instant_flow)}</span>
-        <small>m3/h instant</small>
+        <small>m3/h 瞬时流量</small>
       </div>
 
       <div className="metric-grid">
-        <Metric label="Total" value={`${formatNumber(meter.total_flow)} m3`} />
-        <Metric label="Last 15 min" value={`${formatNumber(recentIncrement)} m3`} />
-        <Metric label="Today" value={`${formatNumber(todayTotal)} m3`} />
-        <Metric label="Anomaly" value={anomaly ? (meter.anomaly_reason || meter.status || 'Check') : 'Clear'} danger={anomaly} />
+        <Metric label="累计流量" value={`${formatNumber(meter.total_flow)} m3`} />
+        <Metric label="最近15分钟" value={`${formatNumber(recentIncrement)} m3`} />
+        <Metric label="今日累计" value={`${formatNumber(todayTotal)} m3`} />
+        <Metric label="异常状态" value={anomaly ? (meter.anomaly_reason || statusText(meter.status, '待检查')) : '正常'} danger={anomaly} />
       </div>
     </button>
   );
