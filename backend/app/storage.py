@@ -26,28 +26,29 @@ def insert_reading(reading: MeterReading) -> dict:
         anomaly_reason = f"device time differs from receive time by {int(skew_seconds)} seconds"
 
     with get_conn() as conn:
-        row = conn.cursor(row_factory=dict_row).execute(
-            """
-            INSERT INTO raw_readings (
-                meter_id, device_ts, received_ts, instant_flow, total_flow,
-                unit, topic, payload, status, anomaly_reason
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
-            RETURNING id, meter_id, device_ts, received_ts, status, anomaly_reason
-            """,
-            (
-                reading.meter_id,
-                reading.device_ts,
-                received_ts,
-                reading.instant_flow,
-                reading.total_flow,
-                reading.unit,
-                reading.topic,
-                json.dumps(reading.payload, ensure_ascii=False),
-                status,
-                anomaly_reason,
-            ),
-        ).fetchone()
+        with conn.cursor(row_factory=dict_row) as cur:
+            row = cur.execute(
+                """
+                INSERT INTO raw_readings (
+                    meter_id, device_ts, received_ts, instant_flow, total_flow,
+                    unit, topic, payload, status, anomaly_reason
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+                RETURNING id, meter_id, device_ts, received_ts, status, anomaly_reason
+                """,
+                (
+                    reading.meter_id,
+                    reading.device_ts,
+                    received_ts,
+                    reading.instant_flow,
+                    reading.total_flow,
+                    reading.unit,
+                    reading.topic,
+                    json.dumps(reading.payload, ensure_ascii=False),
+                    status,
+                    anomaly_reason,
+                ),
+            ).fetchone()
 
         conn.execute(
             """
@@ -259,3 +260,9 @@ def recent_raw(meter_id: str | None, limit: int) -> list[dict]:
                 params,
             ).fetchall()
             return [dict(row) for row in rows]
+
+
+def database_ping() -> bool:
+    with get_conn() as conn:
+        conn.execute("SELECT 1").fetchone()
+        return True

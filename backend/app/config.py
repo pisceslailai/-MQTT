@@ -14,6 +14,8 @@ class Settings:
     mqtt_password: str = os.getenv("MQTT_PASSWORD", "")
     clock_skew_seconds: int = int(os.getenv("CLOCK_SKEW_SECONDS", "120"))
     offline_after_seconds: int = int(os.getenv("OFFLINE_AFTER_SECONDS", "180"))
+    alert_webhook_url: str = os.getenv("ALERT_WEBHOOK_URL", "")
+    alert_webhook_type: str = os.getenv("ALERT_WEBHOOK_TYPE", "wechat")
 
 
 @lru_cache

@@ -56,6 +56,9 @@ class MqttSubscriber:
         self.client.loop_stop()
         self.client.disconnect()
 
+    def is_connected(self) -> bool:
+        return self.client.is_connected()
+
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         logger.info("MQTT connected: %s", reason_code)
         client.subscribe(self.settings.mqtt_topic, qos=1)

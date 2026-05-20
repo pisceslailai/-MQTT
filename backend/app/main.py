@@ -5,9 +5,10 @@ import logging
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from .alerts import send_meter_alerts
 from .db import close_pool, open_pool
 from .mqtt_client import MqttSubscriber
-from .storage import build_intervals, interval_history, latest_meters, recent_raw, refresh_meter_status
+from .storage import build_intervals, database_ping, interval_history, latest_meters, recent_raw, refresh_meter_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -21,7 +22,10 @@ async def background_loop() -> None:
         try:
             refresh_meter_status()
             updated = build_intervals(hours_back=24)
+            alerts = send_meter_alerts(latest_meters())
             logger.info("Refreshed interval readings: %s", updated)
+            if alerts:
+                logger.info("Sent alert notifications: %s", alerts)
         except Exception:
             logger.exception("Background refresh failed")
         await asyncio.sleep(60)
@@ -56,7 +60,17 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    db_ok = False
+    try:
+        db_ok = database_ping()
+    except Exception:
+        logger.exception("Database health check failed")
+    mqtt_connected = bool(mqtt_subscriber and mqtt_subscriber.is_connected())
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "database": "ok" if db_ok else "error",
+        "mqtt_connected": mqtt_connected,
+    }
 
 
 @app.get("/api/meters/latest")
