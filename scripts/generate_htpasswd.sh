@@ -15,5 +15,5 @@ echo
 
 hash="$(openssl passwd -apr1 "$password")"
 printf '%s:%s\n' "$USER_NAME" "$hash" > "$OUTPUT_PATH"
-chmod 600 "$OUTPUT_PATH"
+chmod 644 "$OUTPUT_PATH"
 echo "Wrote $OUTPUT_PATH"
