@@ -12,10 +12,13 @@ from .db import close_pool, open_pool
 from .gateway_config import (
     GatewayParseError,
     delete_gateway_config,
+    delete_usr_r_data_mapping,
     ensure_gateway_config_schema,
     get_gateway_config,
     list_gateway_configs,
+    list_usr_r_data_mappings,
     save_gateway_config,
+    save_usr_r_data_mapping,
     test_gateway_config,
 )
 from .mqtt_client import MqttSubscriber
@@ -172,6 +175,35 @@ def test_config(payload: dict) -> dict:
         return test_gateway_config(payload)
     except (GatewayParseError, ValueError, TypeError) as exc:
         return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/usr-r-data-mappings")
+def get_usr_r_data_mappings() -> dict:
+    return {"mappings": list_usr_r_data_mappings()}
+
+
+@app.post("/api/usr-r-data-mappings")
+def create_usr_r_data_mapping(payload: dict) -> dict:
+    try:
+        return {"mapping": save_usr_r_data_mapping(payload)}
+    except GatewayParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/usr-r-data-mappings/{mapping_id}")
+def update_usr_r_data_mapping(mapping_id: int, payload: dict) -> dict:
+    try:
+        return {"mapping": save_usr_r_data_mapping(payload, mapping_id=mapping_id)}
+    except GatewayParseError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/usr-r-data-mappings/{mapping_id}")
+def remove_usr_r_data_mapping(mapping_id: int) -> dict:
+    deleted = delete_usr_r_data_mapping(mapping_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="USR r_data mapping not found")
+    return {"deleted": True}
 
 
 @app.get("/api/runtime-settings")

@@ -3,7 +3,7 @@ import logging
 import paho.mqtt.client as mqtt
 
 from .config import get_settings
-from .gateway_config import parse_reading_with_configs
+from .gateway_config import enabled_gateway_configs, parse_readings_with_configs
 from .storage import insert_reading
 
 logger = logging.getLogger(__name__)
@@ -36,23 +36,41 @@ class MqttSubscriber:
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         logger.info("MQTT connected: %s", reason_code)
-        client.subscribe(self.settings.mqtt_topic, qos=1)
-        logger.info("MQTT subscribed topic: %s", self.settings.mqtt_topic)
+        for topic in self._subscription_topics():
+            client.subscribe(topic, qos=1)
+            logger.info("MQTT subscribed topic: %s", topic)
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         logger.warning("MQTT disconnected: %s", reason_code)
 
     def _on_message(self, client, userdata, message) -> None:
         try:
-            reading, config = parse_reading_with_configs(message.topic, message.payload)
-            inserted = insert_reading(reading)
-            logger.info(
-                "Stored reading id=%s meter=%s device_ts=%s status=%s config=%s",
-                inserted["id"],
-                inserted["meter_id"],
-                inserted["device_ts"],
-                inserted["status"],
-                config["name"] if config else "default",
-            )
+            readings, config = parse_readings_with_configs(message.topic, message.payload)
+            for reading in readings:
+                inserted = insert_reading(reading)
+                logger.info(
+                    "Stored reading id=%s meter=%s device_ts=%s status=%s config=%s",
+                    inserted["id"],
+                    inserted["meter_id"],
+                    inserted["device_ts"],
+                    inserted["status"],
+                    config["name"] if config else "default",
+                )
         except Exception:
             logger.exception("Failed to process MQTT message topic=%s payload=%r", message.topic, message.payload)
+
+    def _subscription_topics(self) -> list[str]:
+        topics = [self.settings.mqtt_topic]
+        try:
+            topics.extend(config["topic_pattern"] for config in enabled_gateway_configs() if config.get("topic_pattern"))
+        except Exception:
+            logger.exception("Failed to load gateway MQTT subscriptions")
+
+        seen = set()
+        result = []
+        for topic in topics:
+            topic = str(topic or "").strip()
+            if topic and topic not in seen:
+                seen.add(topic)
+                result.append(topic)
+        return result

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import json
 import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from dateutil.parser import isoparse
 from psycopg.rows import dict_row
@@ -66,6 +67,19 @@ class GatewayParseError(ValueError):
     pass
 
 
+USR_TARGET_FIELDS = {"instant_flow", "total_flow"}
+USR_TIME_CANDIDATES = (
+    "params.time",
+    "params.ts",
+    "params.timestamp",
+    "rw_prot.time",
+    "rw_prot.ts",
+    "time",
+    "timestamp",
+    "device_ts",
+)
+
+
 def ensure_gateway_config_schema() -> None:
     with get_conn() as conn:
         conn.execute(
@@ -101,7 +115,135 @@ def ensure_gateway_config_schema() -> None:
         existing = conn.execute("SELECT id FROM gateway_configs LIMIT 1").fetchone()
         if not existing:
             save_gateway_config(asdict(DEFAULT_CONFIG), conn=conn)
+        ensure_usr_r_data_mapping_schema(conn)
         conn.commit()
+
+
+def ensure_usr_r_data_mapping_schema(conn=None) -> None:
+    own_conn = conn is None
+    if own_conn:
+        conn_ctx = get_conn()
+        conn = conn_ctx.__enter__()
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS usr_r_data_mappings (
+                id BIGSERIAL PRIMARY KEY,
+                enabled BOOLEAN NOT NULL DEFAULT true,
+                source_name TEXT NOT NULL UNIQUE,
+                meter_id TEXT NOT NULL,
+                target_field TEXT NOT NULL,
+                scale DOUBLE PRECISION NOT NULL DEFAULT 1,
+                unit TEXT NOT NULL DEFAULT 'm3/h',
+                notes TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT usr_r_data_target_field_check
+                    CHECK (target_field IN ('instant_flow', 'total_flow'))
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_usr_r_data_mappings_enabled
+                ON usr_r_data_mappings (enabled, meter_id, target_field)
+            """
+        )
+        if own_conn:
+            conn.commit()
+    finally:
+        if own_conn:
+            conn_ctx.__exit__(None, None, None)
+
+
+def list_usr_r_data_mappings() -> list[dict[str, Any]]:
+    ensure_usr_r_data_mapping_schema()
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                """
+                SELECT *
+                FROM usr_r_data_mappings
+                ORDER BY meter_id, target_field, source_name
+                """
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+
+def save_usr_r_data_mapping(data: dict[str, Any], mapping_id: int | None = None) -> dict[str, Any]:
+    ensure_usr_r_data_mapping_schema()
+    payload = normalize_usr_mapping_payload(data)
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            if mapping_id:
+                row = cur.execute(
+                    """
+                    UPDATE usr_r_data_mappings
+                    SET enabled = %s,
+                        source_name = %s,
+                        meter_id = %s,
+                        target_field = %s,
+                        scale = %s,
+                        unit = %s,
+                        notes = %s,
+                        updated_at = now()
+                    WHERE id = %s
+                    RETURNING *
+                    """,
+                    (*payload, mapping_id),
+                ).fetchone()
+                if not row:
+                    raise GatewayParseError(f"USR r_data mapping {mapping_id} not found")
+            else:
+                row = cur.execute(
+                    """
+                    INSERT INTO usr_r_data_mappings (
+                        enabled, source_name, meter_id, target_field, scale, unit, notes
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (source_name) DO UPDATE SET
+                        enabled = EXCLUDED.enabled,
+                        meter_id = EXCLUDED.meter_id,
+                        target_field = EXCLUDED.target_field,
+                        scale = EXCLUDED.scale,
+                        unit = EXCLUDED.unit,
+                        notes = EXCLUDED.notes,
+                        updated_at = now()
+                    RETURNING *
+                    """,
+                    payload,
+                ).fetchone()
+        conn.commit()
+        return dict(row)
+
+
+def delete_usr_r_data_mapping(mapping_id: int) -> bool:
+    ensure_usr_r_data_mapping_schema()
+    with get_conn() as conn:
+        result = conn.execute("DELETE FROM usr_r_data_mappings WHERE id = %s", (mapping_id,))
+        conn.commit()
+        return bool(result.rowcount)
+
+
+def normalize_usr_mapping_payload(data: dict[str, Any]) -> tuple:
+    target_field = str(data.get("target_field") or "").strip()
+    if target_field not in USR_TARGET_FIELDS:
+        raise GatewayParseError("target_field must be instant_flow or total_flow")
+    source_name = str(data.get("source_name") or "").strip()
+    if not source_name:
+        raise GatewayParseError("source_name is required")
+    meter_id = str(data.get("meter_id") or "").strip()
+    if not meter_id:
+        raise GatewayParseError("meter_id is required")
+    return (
+        bool(data.get("enabled", True)),
+        source_name,
+        meter_id,
+        target_field,
+        float(data.get("scale") or 1),
+        str(data.get("unit") or "m3/h").strip(),
+        str(data.get("notes") or "").strip(),
+    )
 
 
 def list_gateway_configs() -> list[dict[str, Any]]:
@@ -188,23 +330,112 @@ def delete_gateway_config(config_id: int) -> bool:
         return bool(result.rowcount)
 
 
-def parse_reading_with_configs(topic: str, payload: bytes) -> tuple[MeterReading, dict[str, Any] | None]:
+def parse_readings_with_configs(topic: str, payload: bytes) -> tuple[list[MeterReading], dict[str, Any] | None]:
     data = json.loads(payload.decode("utf-8"))
     if not isinstance(data, dict):
         raise GatewayParseError("payload must be a JSON object")
+
+    if is_usr_r_data_payload(data):
+        readings = parse_usr_r_data_readings(topic, data)
+        return readings, {"name": "USR r_data 批量点位映射"}
 
     errors = []
     for config in enabled_gateway_configs():
         if not mqtt_topic_matches(config["topic_pattern"], topic):
             continue
         try:
-            return parse_reading_with_config(topic, data, config), config
+            return [parse_reading_with_config(topic, data, config)], config
         except Exception as exc:
             errors.append(f"{config['name']}: {exc}")
 
     if errors:
         raise GatewayParseError("; ".join(errors))
-    return parse_default_reading(topic, data), None
+    return [parse_default_reading(topic, data)], None
+
+
+def parse_reading_with_configs(topic: str, payload: bytes) -> tuple[MeterReading, dict[str, Any] | None]:
+    readings, config = parse_readings_with_configs(topic, payload)
+    if len(readings) != 1:
+        raise GatewayParseError(f"expected one reading, parsed {len(readings)}")
+    return readings[0], config
+
+
+def is_usr_r_data_payload(data: dict[str, Any]) -> bool:
+    return isinstance(value_at_path(data, "params.r_data"), list) or isinstance(value_at_path(data, "rw_prot.r_data"), list)
+
+
+def parse_usr_r_data_readings(topic: str, data: dict[str, Any]) -> list[MeterReading]:
+    r_data = value_at_path(data, "params.r_data") or value_at_path(data, "rw_prot.r_data")
+    if not isinstance(r_data, list):
+        raise GatewayParseError("USR payload missing params.r_data")
+
+    mappings = {row["source_name"]: row for row in list_usr_r_data_mappings() if row.get("enabled")}
+    if not mappings:
+        raise GatewayParseError("USR r_data mappings are empty")
+
+    grouped: dict[str, dict[str, Any]] = {}
+    ignored = []
+    errors = []
+    for item in r_data:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name or name not in mappings:
+            ignored.append(name or "<empty>")
+            continue
+        if str(item.get("err", "0")) != "0":
+            errors.append(f"{name} err={item.get('err')}")
+            continue
+        mapping = mappings[name]
+        meter_id = str(mapping["meter_id"])
+        target_field = str(mapping["target_field"])
+        grouped.setdefault(meter_id, {"unit": mapping.get("unit") or "m3/h"})
+        grouped[meter_id][target_field] = parse_scaled_number(item.get("value"), mapping.get("scale", 1), name)
+
+    readings = []
+    device_ts = parse_usr_device_ts(data)
+    for meter_id, values in grouped.items():
+        if "instant_flow" not in values or "total_flow" not in values:
+            errors.append(f"{meter_id} missing instant_flow or total_flow")
+            continue
+        readings.append(
+            MeterReading(
+                meter_id=meter_id,
+                device_ts=device_ts,
+                instant_flow=float(values["instant_flow"]),
+                total_flow=float(values["total_flow"]),
+                unit=str(values.get("unit") or "m3/h"),
+                payload=data,
+                topic=topic,
+            )
+        )
+
+    if not readings:
+        suffix = f"; ignored={ignored}" if ignored else ""
+        raise GatewayParseError(f"USR r_data parsed no complete readings: {'; '.join(errors) or 'no mapped points'}{suffix}")
+    if errors:
+        # Keep usable complete meter readings, but make the reason visible in logs through payload content.
+        data.setdefault("_parse_warnings", errors)
+    return readings
+
+
+def parse_usr_device_ts(data: dict[str, Any]) -> datetime:
+    for path in USR_TIME_CANDIDATES:
+        value = value_at_path(data, path)
+        if value not in (None, ""):
+            return parse_device_ts_allow_local(value)
+    return datetime.now(UTC)
+
+
+def parse_device_ts_allow_local(value: Any) -> datetime:
+    if isinstance(value, (int, float)):
+        if value > 10_000_000_000:
+            value = value / 1000
+        return datetime.fromtimestamp(value, tz=UTC)
+    parsed = isoparse(str(value))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+    return parsed
 
 
 def enabled_gateway_configs() -> list[dict[str, Any]]:
@@ -264,8 +495,8 @@ def test_gateway_config(data: dict[str, Any]) -> dict[str, Any]:
         topic = str(data.get("topic") or "meters/FM001/reading")
         payload = data["payload"]
         payload_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        reading, config = parse_reading_with_configs(topic, payload_bytes)
-        return _reading_result(reading, config)
+        readings, config = parse_readings_with_configs(topic, payload_bytes)
+        return _readings_result(readings, config)
 
     config_data = data.get("config") or {
         **asdict(DEFAULT_CONFIG),
@@ -292,6 +523,14 @@ def _reading_result(reading: MeterReading, config: dict[str, Any] | None) -> dic
             "unit": reading.unit,
             "topic": reading.topic,
         },
+    }
+
+
+def _readings_result(readings: list[MeterReading], config: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "config": config.get("name") if config else "default",
+        "readings": [_reading_result(reading, config)["reading"] for reading in readings],
     }
 
 

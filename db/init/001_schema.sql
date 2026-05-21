@@ -96,6 +96,24 @@ VALUES (
 )
 ON CONFLICT DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS usr_r_data_mappings (
+    id BIGSERIAL PRIMARY KEY,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    source_name TEXT NOT NULL UNIQUE,
+    meter_id TEXT NOT NULL,
+    target_field TEXT NOT NULL,
+    scale DOUBLE PRECISION NOT NULL DEFAULT 1,
+    unit TEXT NOT NULL DEFAULT 'm3/h',
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT usr_r_data_target_field_check
+        CHECK (target_field IN ('instant_flow', 'total_flow'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_usr_r_data_mappings_enabled
+    ON usr_r_data_mappings (enabled, meter_id, target_field);
+
 CREATE TABLE IF NOT EXISTS runtime_settings (
     id BOOLEAN PRIMARY KEY DEFAULT true,
     clock_skew_seconds INTEGER NOT NULL,
