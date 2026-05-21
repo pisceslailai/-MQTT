@@ -102,9 +102,18 @@ http://服务器公网IP
 - Port：`1883`
 - Username：`.env` 的 `MQTT_GATEWAY_USERNAME`
 - Password：`.env` 的 `MQTT_GATEWAY_PASSWORD`
-- Topic：建议 `meters/FM001/reading`、`meters/FM002/reading`
+- Topic：如果现场可配置，建议 `meters/FM001/reading`、`meters/FM002/reading`；如果 USR-G770 已固定为 `/USR-G770/update`，就在后台新增该 topic 的网关配置。
 
 如果 payload 字段不是推荐格式，进入页面 `网关配置`，维护 JSON 路径、倍率和样例 payload，先点击 `测试解析`，确认能转成标准读数后再启用。
+
+USR-G770 轻边缘版通常由网关本地轮询 Modbus，再把多个点位一次性放进 `params.r_data` 上报。平台侧不需要主动发起查询。现场拿到第一条真实报文后，在 `网关配置 -> USR-G770 r_data 点位映射` 里维护：
+
+- `r_data 点位名`：网关报文中的 `params.r_data[].name`
+- `系统表号`：例如 `FM001`、`FM002`
+- `目标字段`：`瞬时流量` 或 `累计流量`
+- `倍率 scale`：寄存器原始值到系统口径的换算倍率
+
+两台流量计至少需要 4 条映射：1 号表瞬时、1 号表累计、2 号表瞬时、2 号表累计。详细示例见 [USR-G770 后端接入配置](usr-g770-backend-config.md)。
 
 同一页面还需要确认数据处理规则：
 

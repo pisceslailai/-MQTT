@@ -522,7 +522,9 @@ h2 {
 
 .config-form input,
 .config-form textarea,
-.runtime-panel input {
+.runtime-panel input,
+.usr-mapping-form input,
+.usr-mapping-form select {
   width: 100%;
   min-height: 36px;
   border: 1px solid var(--line);
@@ -560,6 +562,63 @@ h2 {
   resize: vertical;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.86rem;
+}
+
+.usr-mapping-panel {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #dfe6eb;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.usr-mapping-layout {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.1fr) minmax(320px, 0.9fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.usr-mapping-form {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e2e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.usr-mapping-form label {
+  display: grid;
+  gap: 5px;
+}
+
+.usr-mapping-form label span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.compact-table {
+  min-width: 540px;
+}
+
+.compact-table td,
+.compact-table th {
+  padding: 9px 10px;
+}
+
+.compact-table tbody tr {
+  cursor: pointer;
+}
+
+.compact-table tbody tr:hover,
+.compact-table tbody tr.selected-row {
+  background: var(--accent-soft);
+}
+
+.compact-check {
+  min-height: 57px;
 }
 
 .check-field {
@@ -857,6 +916,7 @@ tbody tr:last-child td {
   .query-panel,
   .summary-grid,
   .runtime-panel,
+  .usr-mapping-layout,
   .config-layout,
   .form-grid.two,
   .form-grid.three,

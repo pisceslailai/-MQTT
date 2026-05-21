@@ -1,0 +1,7 @@
+*.sh text eol=lf
+*.md text
+*.py text
+*.js text
+*.jsx text
+*.css text
+*.sql text

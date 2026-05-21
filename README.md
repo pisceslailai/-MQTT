@@ -205,7 +205,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 - 前端入口启用 Nginx Basic Auth
 - EMQX 禁止匿名 MQTT，使用 `deploy/emqx/auth-built-in-db-bootstrap.csv` 初始化账号
 
-详细步骤见 [docs/cloud-trial-run.md](docs/cloud-trial-run.md)。
+详细步骤见 [docs/cloud-trial-run.md](docs/cloud-trial-run.md)。服务器从零部署命令清单见 [docs/deploy-server.md](docs/deploy-server.md)。
 
 ## 当前测试重点
 

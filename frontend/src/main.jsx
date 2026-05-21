@@ -44,6 +44,19 @@ const DEFAULT_RUNTIME_SETTINGS = {
   offline_after_seconds: 180,
   expected_interval_samples: 10,
 };
+const DEFAULT_USR_MAPPING = {
+  enabled: true,
+  source_name: '',
+  meter_id: METERS[0],
+  target_field: 'instant_flow',
+  scale: 1,
+  unit: 'm3/h',
+  notes: '',
+};
+const USR_TARGET_TEXT = {
+  instant_flow: '瞬时流量',
+  total_flow: '累计流量',
+};
 
 function endpoint(path) {
   return `${API_BASE}${path}`;
@@ -441,6 +454,9 @@ function GatewayConfigPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [form, setForm] = useState(() => normalizeConfigForm(DEFAULT_GATEWAY_CONFIG));
   const [runtimeSettings, setRuntimeSettings] = useState(DEFAULT_RUNTIME_SETTINGS);
+  const [usrMappings, setUsrMappings] = useState([]);
+  const [selectedUsrMappingId, setSelectedUsrMappingId] = useState(null);
+  const [usrMappingForm, setUsrMappingForm] = useState(() => ({ ...DEFAULT_USR_MAPPING }));
   const [recentPayloads, setRecentPayloads] = useState([]);
   const [sampleText, setSampleText] = useState(() => JSON.stringify(DEFAULT_GATEWAY_CONFIG.sample_payload, null, 2));
   const [testTopic, setTestTopic] = useState('meters/FM001/reading');
@@ -463,6 +479,15 @@ function GatewayConfigPage() {
     setRuntimeSettings(normalizeRuntimeSettings(payload?.settings));
   }
 
+  async function loadUsrMappings(signal, options = {}) {
+    const payload = await fetchJson('/api/usr-r-data-mappings', signal);
+    const rows = Array.isArray(payload?.mappings) ? payload.mappings : [];
+    setUsrMappings(rows);
+    if (options.autoSelect && !selectedUsrMappingId && rows.length) {
+      selectUsrMapping(rows[0]);
+    }
+  }
+
   async function loadRecentPayloads(signal) {
     const payload = await fetchJson('/api/readings/payloads?limit=20', signal);
     setRecentPayloads(Array.isArray(payload?.payloads) ? payload.payloads : []);
@@ -472,6 +497,7 @@ function GatewayConfigPage() {
     const controller = new AbortController();
     loadConfigs(controller.signal).catch((loadError) => setError(loadError.message || '无法加载配置'));
     loadRuntimeSettings(controller.signal).catch((loadError) => setError(loadError.message || '无法加载处理规则'));
+    loadUsrMappings(controller.signal, { autoSelect: true }).catch((loadError) => setError(loadError.message || '无法加载 USR 点位映射'));
     loadRecentPayloads(controller.signal).catch(() => setRecentPayloads([]));
     return () => controller.abort();
   }, []);
@@ -502,6 +528,41 @@ function GatewayConfigPage() {
 
   function updateRuntimeField(field, value) {
     setRuntimeSettings((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateUsrMappingField(field, value) {
+    setUsrMappingForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function selectUsrMapping(mapping) {
+    setSelectedUsrMappingId(mapping.id || null);
+    setUsrMappingForm(normalizeUsrMappingForm(mapping));
+    setMessage('');
+    setError('');
+  }
+
+  function newUsrMapping(seed = {}) {
+    setSelectedUsrMappingId(null);
+    setUsrMappingForm(normalizeUsrMappingForm({ ...DEFAULT_USR_MAPPING, ...seed }));
+    setMessage('');
+    setError('');
+  }
+
+  function useUsrNamesFromSample() {
+    try {
+      const payload = JSON.parse(sampleText);
+      const names = extractUsrRDataNames(payload);
+      if (!names.length) {
+        setError('当前样例里没有找到 params.r_data[].name');
+        return;
+      }
+      const existing = new Set(usrMappings.map((row) => row.source_name));
+      const firstNewName = names.find((name) => !existing.has(name)) || names[0];
+      newUsrMapping({ source_name: firstNewName });
+      setMessage(`已从样例识别 ${names.length} 个 USR 点位名`);
+    } catch (parseError) {
+      setError(`样例 Payload 不是有效 JSON：${parseError.message}`);
+    }
   }
 
   function payloadForSubmit() {
@@ -598,6 +659,47 @@ function GatewayConfigPage() {
       setMessage('数据处理规则已保存');
     } catch (saveError) {
       setError(saveError.message || '保存处理规则失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveUsrMapping(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      const payload = {
+        ...usrMappingForm,
+        scale: Number(usrMappingForm.scale),
+      };
+      const path = selectedUsrMappingId ? `/api/usr-r-data-mappings/${selectedUsrMappingId}` : '/api/usr-r-data-mappings';
+      const method = selectedUsrMappingId ? 'PUT' : 'POST';
+      const response = await sendJson(path, method, payload);
+      setSelectedUsrMappingId(response.mapping.id);
+      setUsrMappingForm(normalizeUsrMappingForm(response.mapping));
+      await loadUsrMappings();
+      setMessage('USR 点位映射已保存');
+    } catch (saveError) {
+      setError(saveError.message || '保存 USR 点位映射失败');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteUsrMapping() {
+    if (!selectedUsrMappingId) return;
+    setLoading(true);
+    setError('');
+    setMessage('');
+    try {
+      await sendJson(`/api/usr-r-data-mappings/${selectedUsrMappingId}`, 'DELETE', {});
+      newUsrMapping();
+      await loadUsrMappings();
+      setMessage('USR 点位映射已删除');
+    } catch (deleteError) {
+      setError(deleteError.message || '删除 USR 点位映射失败');
     } finally {
       setLoading(false);
     }
@@ -713,6 +815,83 @@ function GatewayConfigPage() {
           </div>
         </form>
       </div>
+
+      <div className="usr-mapping-panel">
+        <div className="section-head">
+          <div>
+            <p className="eyebrow">USR-G770</p>
+            <h2>r_data 点位映射</h2>
+          </div>
+          <div className="form-actions">
+            <button type="button" onClick={useUsrNamesFromSample}>从样例识别点位</button>
+            <button type="button" className="primary-action compact" onClick={() => newUsrMapping()}>新增映射</button>
+          </div>
+        </div>
+
+        <div className="usr-mapping-layout">
+          <div className="table-wrap">
+            <table className="compact-table">
+              <thead>
+                <tr>
+                  <th>点位名</th>
+                  <th>表号</th>
+                  <th>目标字段</th>
+                  <th>倍率</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usrMappings.map((mapping) => (
+                  <tr
+                    key={mapping.id}
+                    className={selectedUsrMappingId === mapping.id ? 'selected-row' : ''}
+                    onClick={() => selectUsrMapping(mapping)}
+                  >
+                    <td><span className="primary">{mapping.source_name}</span></td>
+                    <td>{mapping.meter_id}</td>
+                    <td>{USR_TARGET_TEXT[mapping.target_field] || mapping.target_field}</td>
+                    <td>{formatNumber(mapping.scale, 6)}</td>
+                    <td>{mapping.enabled ? '启用' : '停用'}</td>
+                  </tr>
+                ))}
+                {!usrMappings.length && (
+                  <tr>
+                    <td colSpan="5" className="empty-row">暂无 USR 点位映射。拿到网关 r_data.name 后在这里配置。</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <form className="usr-mapping-form" onSubmit={saveUsrMapping}>
+            <div className="form-grid two">
+              <Field label="r_data 点位名" value={usrMappingForm.source_name} onChange={(value) => updateUsrMappingField('source_name', value)} />
+              <Field label="系统表号" value={usrMappingForm.meter_id} onChange={(value) => updateUsrMappingField('meter_id', value)} />
+              <label>
+                <span>目标字段</span>
+                <select value={usrMappingForm.target_field} onChange={(event) => updateUsrMappingField('target_field', event.target.value)}>
+                  <option value="instant_flow">瞬时流量</option>
+                  <option value="total_flow">累计流量</option>
+                </select>
+              </label>
+              <Field label="倍率 scale" type="number" step="0.000001" value={usrMappingForm.scale} onChange={(value) => updateUsrMappingField('scale', value)} />
+              <Field label="单位" value={usrMappingForm.unit} onChange={(value) => updateUsrMappingField('unit', value)} />
+              <label className="check-field compact-check">
+                <input type="checkbox" checked={usrMappingForm.enabled} onChange={(event) => updateUsrMappingField('enabled', event.target.checked)} />
+                <span>启用此映射</span>
+              </label>
+            </div>
+            <label className="full-field">
+              <span>备注</span>
+              <input value={usrMappingForm.notes} onChange={(event) => updateUsrMappingField('notes', event.target.value)} />
+            </label>
+            <div className="form-actions">
+              <button type="submit" className="primary-action" disabled={loading}>{loading ? '处理中' : '保存映射'}</button>
+              <button type="button" className="danger-action" onClick={deleteUsrMapping} disabled={loading || !selectedUsrMappingId}>删除映射</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </section>
   );
 }
@@ -731,6 +910,21 @@ function normalizeRuntimeSettings(settings) {
     ...DEFAULT_RUNTIME_SETTINGS,
     ...(settings || {}),
   };
+}
+
+function normalizeUsrMappingForm(mapping) {
+  return {
+    ...DEFAULT_USR_MAPPING,
+    ...(mapping || {}),
+    enabled: Boolean(mapping?.enabled ?? true),
+    scale: mapping?.scale ?? 1,
+  };
+}
+
+function extractUsrRDataNames(payload) {
+  const rData = payload?.params?.r_data || payload?.rw_prot?.r_data || [];
+  if (!Array.isArray(rData)) return [];
+  return [...new Set(rData.map((item) => String(item?.name || '').trim()).filter(Boolean))];
 }
 
 function Field({ label, value, onChange, type = 'text', step }) {
