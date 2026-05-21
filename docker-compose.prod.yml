@@ -61,6 +61,8 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        VITE_SHOW_CONFIG_UI: "false"
     container_name: flow-frontend
     restart: unless-stopped
     depends_on:

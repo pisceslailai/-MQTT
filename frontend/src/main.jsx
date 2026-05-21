@@ -5,6 +5,7 @@ import './styles.css';
 const METERS = ['FM001', 'FM002'];
 const POLL_MS = 10000;
 const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+const SHOW_CONFIG_UI = import.meta.env.VITE_SHOW_CONFIG_UI === 'true';
 const STATUS_TEXT = {
   valid: '正常',
   normal: '正常',
@@ -348,7 +349,9 @@ function App() {
         <div className="top-actions">
           <div className="main-nav" role="tablist" aria-label="主导航">
             <button type="button" className={activePage === 'dashboard' ? 'active' : ''} onClick={() => setActivePage('dashboard')}>运行看板</button>
-            <button type="button" className={activePage === 'gateway' ? 'active' : ''} onClick={() => setActivePage('gateway')}>网关配置</button>
+            {SHOW_CONFIG_UI && (
+              <button type="button" className={activePage === 'gateway' ? 'active' : ''} onClick={() => setActivePage('gateway')}>网关配置</button>
+            )}
           </div>
           <div className="refresh-box">
             <span className={latestError ? 'dot danger' : 'dot ok'} />
@@ -360,7 +363,7 @@ function App() {
         </div>
       </header>
 
-      {activePage === 'gateway' ? (
+      {SHOW_CONFIG_UI && activePage === 'gateway' ? (
         <GatewayConfigPage />
       ) : (
         <>
@@ -1224,3 +1227,8 @@ function exportCurrent(activeView, intervals, rawReadings, selectedMeter) {
 }
 
 createRoot(document.getElementById('root')).render(<App />);
+  useEffect(() => {
+    if (!SHOW_CONFIG_UI && activePage === 'gateway') {
+      setActivePage('dashboard');
+    }
+  }, [activePage]);
