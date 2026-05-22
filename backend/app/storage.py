@@ -118,7 +118,7 @@ def build_intervals(hours_back: int = 24) -> int:
                     device_ts,
                     instant_flow,
                     total_flow,
-                    date_bin('15 minutes', device_ts, TIMESTAMPTZ '2000-01-01 00:00:00+00') AS window_start,
+                    date_bin('15 minutes', device_ts, TIMESTAMPTZ '2000-01-01 00:00:00+00') AS window_start
                 FROM raw_readings
                 WHERE status = 'valid'
                   AND device_ts >= %s
