@@ -111,35 +111,43 @@ def build_intervals(hours_back: int = 24) -> int:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            WITH valid_windows AS (
+            WITH windowed AS (
+                SELECT
+                    id,
+                    meter_id,
+                    device_ts,
+                    instant_flow,
+                    total_flow,
+                    date_bin('15 minutes', device_ts, TIMESTAMPTZ '2000-01-01 00:00:00+00') AS window_start,
+                FROM raw_readings
+                WHERE status = 'valid'
+                  AND device_ts >= %s
+            ),
+            ranked AS (
+                SELECT
+                    *,
+                    row_number() OVER (
+                        PARTITION BY meter_id, window_start
+                        ORDER BY device_ts ASC, id ASC
+                    ) AS first_rank,
+                    row_number() OVER (
+                        PARTITION BY meter_id, window_start
+                        ORDER BY device_ts DESC, id DESC
+                    ) AS last_rank
+                FROM windowed
+            ),
+            totals AS (
                 SELECT
                     meter_id,
-                    date_bin('15 minutes', device_ts, TIMESTAMPTZ '2000-01-01 00:00:00+00') AS window_start,
-                    min(device_ts) AS first_ts,
-                    max(device_ts) AS last_ts,
+                    window_start,
+                    max(total_flow) FILTER (WHERE first_rank = 1) AS first_total_flow,
+                    max(total_flow) FILTER (WHERE last_rank = 1) AS last_total_flow,
                     avg(instant_flow) AS avg_instant_flow,
                     min(instant_flow) AS min_instant_flow,
                     max(instant_flow) AS max_instant_flow,
                     count(*)::int AS sample_count
-                FROM raw_readings
-                WHERE status = 'valid'
-                  AND device_ts >= %s
+                FROM ranked
                 GROUP BY meter_id, window_start
-            ),
-            totals AS (
-                SELECT
-                    vw.*,
-                    first_raw.total_flow AS first_total_flow,
-                    last_raw.total_flow AS last_total_flow
-                FROM valid_windows vw
-                JOIN raw_readings first_raw
-                  ON first_raw.meter_id = vw.meter_id
-                 AND first_raw.device_ts = vw.first_ts
-                 AND first_raw.status = 'valid'
-                JOIN raw_readings last_raw
-                  ON last_raw.meter_id = vw.meter_id
-                 AND last_raw.device_ts = vw.last_ts
-                 AND last_raw.status = 'valid'
             )
             INSERT INTO interval_readings (
                 meter_id, window_start, window_end, first_total_flow, last_total_flow,
