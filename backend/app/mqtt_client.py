@@ -3,8 +3,8 @@ import logging
 import paho.mqtt.client as mqtt
 
 from .config import get_settings
-from .gateway_config import enabled_gateway_configs, parse_readings_with_configs
-from .storage import insert_reading
+from .gateway_config import IgnoredMqttPayload, enabled_gateway_configs, parse_readings_with_configs
+from .storage import insert_reading, record_gateway_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,14 @@ class MqttSubscriber:
                     inserted["status"],
                     config["name"] if config else "default",
                 )
+        except IgnoredMqttPayload as exc:
+            status = record_gateway_heartbeat(message.topic, exc.payload_text)
+            logger.info(
+                "Recorded gateway heartbeat gateway=%s topic=%s reason=%s",
+                status["gateway_id"],
+                message.topic,
+                exc.reason,
+            )
         except Exception:
             logger.exception("Failed to process MQTT message topic=%s payload=%r", message.topic, message.payload)
 

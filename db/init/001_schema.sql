@@ -58,6 +58,16 @@ INSERT INTO meter_status (meter_id, status)
 VALUES ('FM001', 'unknown'), ('FM002', 'unknown')
 ON CONFLICT (meter_id) DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS gateway_status (
+    gateway_id TEXT PRIMARY KEY,
+    last_heartbeat_ts TIMESTAMPTZ,
+    last_topic TEXT,
+    last_payload TEXT,
+    online BOOLEAN NOT NULL DEFAULT false,
+    status TEXT NOT NULL DEFAULT 'unknown',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS gateway_configs (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL,

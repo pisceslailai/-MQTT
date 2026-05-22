@@ -67,7 +67,15 @@ class GatewayParseError(ValueError):
     pass
 
 
+class IgnoredMqttPayload(ValueError):
+    def __init__(self, reason: str, payload_text: str = "") -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.payload_text = payload_text
+
+
 USR_TARGET_FIELDS = {"instant_flow", "total_flow"}
+IGNORED_TEXT_PAYLOADS = {"heartbeat", "ping", "pong", "ok"}
 USR_TIME_CANDIDATES = (
     "params.time",
     "params.ts",
@@ -331,7 +339,14 @@ def delete_gateway_config(config_id: int) -> bool:
 
 
 def parse_readings_with_configs(topic: str, payload: bytes) -> tuple[list[MeterReading], dict[str, Any] | None]:
-    data = json.loads(payload.decode("utf-8"))
+    text = payload.decode("utf-8", errors="replace").strip()
+    if not text:
+        raise IgnoredMqttPayload("empty MQTT payload", text)
+    if not text.startswith(("{", "[")):
+        if text.lower() in IGNORED_TEXT_PAYLOADS:
+            raise IgnoredMqttPayload("MQTT heartbeat payload", text)
+        raise GatewayParseError(f"payload is not JSON: {text[:80]}")
+    data = json.loads(text)
     if not isinstance(data, dict):
         raise GatewayParseError("payload must be a JSON object")
 

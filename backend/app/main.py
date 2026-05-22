@@ -23,7 +23,17 @@ from .gateway_config import (
 )
 from .mqtt_client import MqttSubscriber
 from .runtime_settings import ensure_runtime_settings_schema, get_runtime_settings, update_runtime_settings
-from .storage import build_intervals, database_ping, interval_history, latest_meters, recent_payloads, recent_raw, refresh_meter_status
+from .storage import (
+    build_intervals,
+    database_ping,
+    ensure_gateway_status_schema,
+    interval_history,
+    latest_gateways,
+    latest_meters,
+    recent_payloads,
+    recent_raw,
+    refresh_meter_status,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -51,6 +61,7 @@ async def lifespan(app: FastAPI):
     global mqtt_subscriber, background_task
     open_pool()
     ensure_gateway_config_schema()
+    ensure_gateway_status_schema()
     ensure_runtime_settings_schema()
     mqtt_subscriber = MqttSubscriber()
     mqtt_subscriber.start()
@@ -94,6 +105,11 @@ def health() -> dict:
 @app.get("/api/meters/latest")
 def get_latest_meters() -> dict:
     return {"meters": latest_meters()}
+
+
+@app.get("/api/gateways/latest")
+def get_latest_gateways() -> dict:
+    return {"gateways": latest_gateways()}
 
 
 @app.get("/api/intervals")

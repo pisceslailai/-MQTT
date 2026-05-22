@@ -8,6 +8,59 @@ from .models import MeterReading
 from .runtime_settings import get_runtime_settings
 
 
+GATEWAY_OFFLINE_AFTER_SECONDS = 20 * 60
+
+
+def gateway_id_from_topic(topic: str) -> str:
+    parts = [part for part in topic.split("/") if part]
+    return parts[0] if parts else "default"
+
+
+def ensure_gateway_status_schema() -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gateway_status (
+                gateway_id TEXT PRIMARY KEY,
+                last_heartbeat_ts TIMESTAMPTZ,
+                last_topic TEXT,
+                last_payload TEXT,
+                online BOOLEAN NOT NULL DEFAULT false,
+                status TEXT NOT NULL DEFAULT 'unknown',
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """
+        )
+        conn.commit()
+
+
+def record_gateway_heartbeat(topic: str, payload_text: str) -> dict:
+    gateway_id = gateway_id_from_topic(topic)
+    ensure_gateway_status_schema()
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            row = cur.execute(
+                """
+                INSERT INTO gateway_status (
+                    gateway_id, last_heartbeat_ts, last_topic, last_payload,
+                    online, status, updated_at
+                )
+                VALUES (%s, now(), %s, %s, true, 'online', now())
+                ON CONFLICT (gateway_id) DO UPDATE SET
+                    last_heartbeat_ts = EXCLUDED.last_heartbeat_ts,
+                    last_topic = EXCLUDED.last_topic,
+                    last_payload = EXCLUDED.last_payload,
+                    online = true,
+                    status = 'online',
+                    updated_at = now()
+                RETURNING *
+                """,
+                (gateway_id, topic, payload_text[:200]),
+            ).fetchone()
+        conn.commit()
+        return dict(row)
+
+
 def normalize_window(ts: datetime) -> datetime:
     ts = ts.astimezone(UTC)
     minute = (ts.minute // 15) * 15
@@ -88,6 +141,21 @@ def refresh_meter_status() -> None:
     with get_conn() as conn:
         conn.execute(
             """
+            UPDATE gateway_status
+            SET
+                online = last_heartbeat_ts IS NOT NULL
+                    AND last_heartbeat_ts >= now() - (%s || ' seconds')::interval,
+                status = CASE
+                    WHEN last_heartbeat_ts IS NULL THEN 'unknown'
+                    WHEN last_heartbeat_ts < now() - (%s || ' seconds')::interval THEN 'offline'
+                    ELSE status
+                END,
+                updated_at = now()
+            """,
+            (GATEWAY_OFFLINE_AFTER_SECONDS, GATEWAY_OFFLINE_AFTER_SECONDS),
+        )
+        conn.execute(
+            """
             UPDATE meter_status
             SET
                 online = last_received_ts IS NOT NULL
@@ -102,6 +170,21 @@ def refresh_meter_status() -> None:
             (runtime_settings["offline_after_seconds"], runtime_settings["offline_after_seconds"]),
         )
         conn.commit()
+
+
+def latest_gateways() -> list[dict]:
+    ensure_gateway_status_schema()
+    refresh_meter_status()
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                """
+                SELECT *
+                FROM gateway_status
+                ORDER BY gateway_id
+                """
+            ).fetchall()
+            return [dict(row) for row in rows]
 
 
 def build_intervals(hours_back: int = 24) -> int:
